@@ -40,6 +40,52 @@
 - [Home Assistant](https://www.home-assistant.io/) integration via MQTT. The ability to create any automation for the boiler!
 
 ## Documentation
+
+### 当前部署（现场核实）
+
+核实时间：**2026-11-14 08:38（Asia/Shanghai）**。以下为实机 API 和已登录的 Home Assistant 设备页读取结果；运行数值是当时快照。
+
+| 项目 | 已确认信息 |
+| --- | --- |
+| 部署状态 | 实机已运行 OTGateway 固件，设备首页返回 HTTP 200 |
+| 设备管理地址 | [http://192.168.100.171/](http://192.168.100.171/) |
+| 主机名 | `opentherm` |
+| 芯片 / 构建环境 | ESP32-C3（rev. 4）/ `c3_mini`，Flash 4 MiB |
+| 实机固件版本 | `1.6.0-webfix1` |
+| 固件构建时间 | `Nov 12 2026 12:41:49`（设备返回原文，时区未标注） |
+| 壁挂炉连接 | OpenTherm 已连接：`/api/vars` 中 `slave.connected=true`，HA 中 `Opentherm status` 为“已连接” |
+| MQTT 连接 | 已连接：`master.mqtt.connected=true` |
+| Home Assistant 地址 | [https://home.winter-zhu.top:1009/](https://home.winter-zhu.top:1009/) |
+| HA 设备 | `OpenTherm Gateway`，区域“厨房”，通过 MQTT 集成接入 |
+| HA 设备详情 | [打开设备页](https://home.winter-zhu.top:1009/config/devices/device/3c0884e5293970374bfbac9ca126c8ac) |
+| HA 与实机对应关系 | HA 设备“访问”链接指向 `http://192.168.100.171/`，固件版本同为 `1.6.0-webfix1` |
+
+已确认固件在设备上运行；本次未比对实机固件与当前工作区源码/提交是否完全一致。壁挂炉品牌和型号尚未核实。
+
+核实时的运行状态：
+
+- 壁挂炉故障、诊断告警均未激活（`slave.fault.active=false`、`slave.diag.active=false`），紧急模式未激活（`master.emergency.state=false`）。
+- 火焰、采暖、生活热水当时均未运行；HA 同样显示“未在运行”，OpenTherm 连接仍正常。
+- 实机采暖水温约 43 °C，采暖水温设定值 45 °C，室温目标 23 °C、当前约 23.25 °C；生活热水温度 39 °C、目标 50 °C。
+- HA 显示系统压力 1.30 bar，并已显示采暖、生活热水、火焰、温度和诊断等实体。
+
+需要后续关注：`/api/info` 的上次重启原因是 `Software reset via esp_restart (critical heap)`，读取时已运行 677 秒，空闲堆内存 24,996 字节、历史最低 7,816 字节。该记录说明曾因堆内存临界触发软件重启；本次在线核实不能据此认定长期运行稳定，也未进一步定位重启根因。
+
+复核入口（只读）：
+
+```sh
+curl --compressed --max-time 15 http://192.168.100.171/api/info
+curl --compressed --max-time 15 http://192.168.100.171/api/vars
+```
+
+`/api/info` 用于查看固件、芯片、网络和重启信息；`/api/vars` 用于查看 OpenTherm、MQTT、故障和当前运行状态。HA 接入状态可登录上面的设备详情页核对。本次仅进行只读核实，没有调整设备、壁挂炉或 HA 设置。
+
+### 异常重启修复记录
+
+2026-11-14 的实机排查、修复、OTA 保护及测试结果见 [异常重启分析](docs/restart-analysis.md)。针对现场 ESP32-C3 的构建入口为 `python3 tools/build_stability.py`。
+
+### 上游文档
+
 All available information and instructions can be found in the wiki:
 
 * [Home](https://github.com/Laxilef/OTGateway/wiki)
