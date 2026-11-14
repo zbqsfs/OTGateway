@@ -16,6 +16,14 @@ protected:
   //bool outdoorSensorsConnected = false;
 
   #if defined(ARDUINO_ARCH_ESP32)
+  #ifdef CONFIG_IDF_TARGET_ESP32C3
+  // Measured on C3 with BLE, MQTT discovery and HTTP active; retain stack margin.
+  uint32_t getTaskStackSize() override {
+    return 4096;
+  }
+
+  #endif
+
   const char* getTaskName() override {
     return "Regulator";
   }

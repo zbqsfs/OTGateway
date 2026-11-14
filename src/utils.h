@@ -184,11 +184,7 @@ size_t getMaxFreeBlockHeap(bool getMinValue = false) {
 
   #if defined(ARDUINO_ARCH_ESP32)
   value = ESP.getMaxAllocHeap();
-
-  size_t minHeapValue = getFreeHeap(true);
-  if (minHeapValue < minValue || minValue == 0) {
-    minValue = minHeapValue;
-  }
+  // Track samples of the largest block, not the unrelated total-heap minimum.
   #elif defined(ARDUINO_ARCH_ESP8266)
   value = ESP.getMaxFreeBlockSize();
   #endif
@@ -260,6 +256,10 @@ String getResetReason() {
   #else
   value = F("unknown");
   #endif
+
+  if (CrashRecorder::heapRestartAvailable) {
+    value += F(" (critical heap)");
+  }
 
   return value;
 }

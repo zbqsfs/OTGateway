@@ -1,5 +1,8 @@
 #define ARDUINOJSON_USE_DOUBLE 0
 #define ARDUINOJSON_USE_LONG_LONG 0
+// Halve the default 128-slot pools on ESP32 for small API/discovery documents.
+// Additional pools are allocated as needed; this is not a document size limit.
+#define ARDUINOJSON_POOL_CAPACITY 64
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -13,8 +16,11 @@
 #include <TinyLogger.h>
 #include <NetworkMgr.h>
 #include "CrashRecorder.h"
+#include "OtaHealth.h"
 #include "Sensors.h"
 #include "Settings.h"
+#include "NetworkSettingsStorage.h"
+#include "SettingsMigration.h"
 #include "utils.h"
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -56,6 +62,7 @@ MainTask* tMain;
 
 void setup() {
   CrashRecorder::init();
+  OtaHealth::begin();
   Sensors::setMaxSensors(SENSORS_AMOUNT);
   Sensors::settings = sensorsSettings;
   Sensors::results = sensorsResults;
@@ -85,6 +92,12 @@ void setup() {
   //
   // Network settings
   // The network file has to survive updates, this ensures it doesn't get wiped when the structure is modified
+  #if !USE_ETHERNET
+  // Preserve the pre-Ethernet layout on Wi-Fi-only targets. FileData.read()
+  // otherwise extends it immediately, and the previous firmware resets a
+  // larger-than-expected file to defaults when OTA rolls back (losing Wi-Fi).
+  preserveWifiNetworkLayout(fsNetworkSettings, LittleFS, networkSettings);
+  #endif
   fsNetworkSettings.addWithoutWipe(true);
 
   switch (fsNetworkSettings.read()) {
@@ -132,7 +145,7 @@ void setup() {
 
   //
   // Settings
-  switch (fsSettings.read()) {
+  switch (readSettingsPreservingRollback(fsSettings, LittleFS, settings)) {
     case FD_FS_ERR:
       Log.swarningln(FPSTR(L_SETTINGS), F("Filesystem error, load default"));
       break;

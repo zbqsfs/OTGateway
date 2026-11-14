@@ -11,7 +11,11 @@ public:
   }
 
   template <class T>
-  void send(int code, T contentType, const JsonVariantConst content, bool pretty = false) {
+  void send(int code, T contentType, const JsonDocument& content, bool pretty = false) {
+    if (content.overflowed() || this->buffer == nullptr || this->bufferSize == 0) {
+      this->webServer->send(503, "text/plain", "Insufficient memory; retry later");
+      return;
+    }
     auto contentLength = pretty ? measureJsonPretty(content) : measureJson(content);
 
     #ifdef ARDUINO_ARCH_ESP8266
@@ -91,6 +95,10 @@ public:
 
     #ifdef ARDUINO_ARCH_ESP8266
     ::optimistic_yield(1000);
+    #elif defined(ARDUINO_ARCH_ESP32)
+    // Let TCP/Wi-Fi drain between batches instead of retaining the whole
+    // response in network buffers while MQTT and BLE are also allocating.
+    ::delay(1);
     #endif
   }
 

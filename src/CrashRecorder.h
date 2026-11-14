@@ -2,7 +2,9 @@
 #include <Arduino.h>
 
 #ifdef ARDUINO_ARCH_ESP32
+  #include "esp_attr.h"
   #include "esp_err.h"
+  #include "esp_system.h"
 #endif
 
 #ifdef ARDUINO_ARCH_ESP8266
@@ -33,6 +35,30 @@ namespace CrashRecorder {
     size_t heap;
     unsigned long uptime;
   } ext_t;
+
+  typedef struct {
+    uint32_t magic;
+    size_t heap;
+    size_t maxFreeBlock;
+    unsigned long uptime;
+  } heap_restart_t;
+
+  const uint32_t heapRestartMagic = 0x48454150;
+  #ifdef ARDUINO_ARCH_ESP32
+  RTC_NOINIT_ATTR volatile static heap_restart_t pendingHeapRestart;
+  #else
+  __NOINIT_ATTR volatile static heap_restart_t pendingHeapRestart;
+  #endif
+  static heap_restart_t heapRestart = {};
+  bool heapRestartAvailable = false;
+
+  void recordHeapRestart(size_t heap, size_t maxFreeBlock, unsigned long uptime) {
+    pendingHeapRestart.magic = 0;
+    pendingHeapRestart.heap = heap;
+    pendingHeapRestart.maxFreeBlock = maxFreeBlock;
+    pendingHeapRestart.uptime = uptime;
+    pendingHeapRestart.magic = heapRestartMagic;
+  }
 
 
   __NOINIT_ATTR volatile static backtrace_t backtrace;
@@ -72,6 +98,21 @@ namespace CrashRecorder {
   #endif
   
   void init() {
+    #ifdef ARDUINO_ARCH_ESP32
+    const bool softwareRestart = esp_reset_reason() == ESP_RST_SW;
+    #else
+    const bool softwareRestart = ESP.getResetInfoPtr()->reason == REASON_SOFT_RESTART;
+    #endif
+
+    heapRestartAvailable = softwareRestart && pendingHeapRestart.magic == heapRestartMagic;
+    if (heapRestartAvailable) {
+      heapRestart.heap = pendingHeapRestart.heap;
+      heapRestart.maxFreeBlock = pendingHeapRestart.maxFreeBlock;
+      heapRestart.uptime = pendingHeapRestart.uptime;
+    }
+    // Consume the marker so a later manual restart cannot inherit this cause.
+    pendingHeapRestart.magic = 0;
+
     if (backtrace.length > backtraceMaxLength) {
       backtrace.length = 0;
     }

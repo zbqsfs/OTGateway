@@ -4,6 +4,7 @@ using namespace NetworkUtils;
 
 extern NetworkMgr* network;
 extern MqttTask* tMqtt;
+extern PortalTask* tPortal;
 extern OpenThermTask* tOt;
 extern FileData fsNetworkSettings, fsSettings, fsSensorsSettings;
 extern ESPTelnetStream* telnetStream;
@@ -45,6 +46,14 @@ protected:
   unsigned long emergencyFlipTime = 0;
 
   #if defined(ARDUINO_ARCH_ESP32)
+  #ifdef CONFIG_IDF_TARGET_ESP32C3
+  // Measured on C3 with BLE, MQTT discovery and HTTP active; retain stack margin.
+  uint32_t getTaskStackSize() override {
+    return 6144;
+  }
+
+  #endif
+
   const char* getTaskName() override {
     return "Main";
   }
@@ -185,6 +194,10 @@ protected:
       return false;
     }
 
+    OtaHealth::loop(network->isConnected() && tPortal->isReady()
+      && !vars.states.restarting && !vars.states.upgrading
+      && getFreeHeap() >= 16384 && getMaxFreeBlockHeap() >= 8192);
+
     // restart if required
     if (this->restartSignalReceived && millis() - this->restartSignalReceivedTime > 15000) {
       this->restartSignalReceived = false;
@@ -206,10 +219,17 @@ protected:
     unsigned int maxFreeBlockHeap = getMaxFreeBlockHeap();
 
     // critical heap
-    if (!vars.states.restarting && (freeHeap < 2048 || maxFreeBlockHeap < 2048)) {
+    if (!vars.states.restarting && !vars.states.upgrading && (freeHeap < 2048 || maxFreeBlockHeap < 2048)) {
       this->restartSignalReceivedTime = millis();
       this->restartSignalReceived = true;
       vars.states.restarting = true;
+
+      CrashRecorder::recordHeapRestart(freeHeap, maxFreeBlockHeap, this->restartSignalReceivedTime / 1000u);
+      Log.serrorln(
+        FPSTR(L_MAIN),
+        F("Low heap: free=%u max=%u; restart in 15s"),
+        freeHeap, maxFreeBlockHeap
+      );
     }
 
     if (settings.system.logLevel < TinyLogger::Level::VERBOSE) {

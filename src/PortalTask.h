@@ -27,7 +27,8 @@ class PortalTask : public LeanTask {
 public:
   PortalTask(bool _enabled = false, unsigned long _interval = 0) : LeanTask(_enabled, _interval) {
     this->webServer = new WebServer(80);
-    this->bufferedWebServer = new BufferedWebServer(this->webServer, 32u);
+    // With TCP_NODELAY, 32-byte writes exhaust TCP/Wi-Fi buffers on the C3.
+    this->bufferedWebServer = new BufferedWebServer(this->webServer, 1024u);
     this->dnsServer = new DNSServer();
     this->mDnsRetryTime = millis() - this->mDnsRetryInterval;
   }
@@ -44,6 +45,10 @@ public:
       this->stopDnsServer();
       delete this->dnsServer;
     }
+  }
+
+  bool isReady() const {
+    return this->webServerEnabled;
   }
 
 protected:
@@ -64,6 +69,14 @@ protected:
   const unsigned long mDnsRetryInterval = 5000;
 
   #if defined(ARDUINO_ARCH_ESP32)
+  #ifdef CONFIG_IDF_TARGET_ESP32C3
+  // Measured on C3 with BLE, MQTT discovery and HTTP active; retain stack margin.
+  uint32_t getTaskStackSize() override {
+    return 6144;
+  }
+
+  #endif
+
   const char* getTaskName() override {
     return "Portal";
   }
@@ -81,7 +94,7 @@ protected:
     this->dnsServer->setTTL(0);
     this->dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
     this->webServer->enableETag(true, [](FS &fs, const String &fName) -> const String {
-      char buf[32];
+      char buf[33]; // 32 hex characters plus the terminating NUL.
       {
         MD5Builder md5;
         md5.begin();
@@ -195,7 +208,7 @@ protected:
 
       return true;
     })->setBeforeUpgradeCallback([](UpgradeHandler::UpgradeType type) -> bool {
-      if (vars.states.restarting) {
+      if (vars.states.restarting || OtaHealth::isPending()) {
         return false;
       }
 
@@ -221,6 +234,9 @@ protected:
       response.concat(F("\"}}"));
       this->webServer->send(status, F("application/json"), response);
 
+      vars.states.upgrading = false;
+    });
+    upgradeHandler->setUploadAbortedCallback([]() {
       vars.states.upgrading = false;
     });
     this->webServer->addHandler(upgradeHandler);
@@ -808,6 +824,30 @@ protected:
 
     this->webServer->on(F("/api/debug"), HTTP_GET, [this]() {
       JsonDocument doc;
+
+      #ifdef ARDUINO_ARCH_ESP32
+      auto docOta = doc["ota"].to<JsonObject>();
+      OtaHealth::toJson(docOta);
+      {
+        File file = LittleFS.open("/network.conf", "r");
+        docOta["networkSettingsFileBytes"] = file ? file.size() : 0;
+      }
+      auto docStacks = doc["stackMinFreeBytes"].to<JsonObject>();
+      for (const char* name : {"Main", "OpenTherm", "Sensors", "Regulator", "Portal", "Mqtt"}) {
+        TaskHandle_t handle = xTaskGetHandle(name);
+        if (handle != nullptr) {
+          docStacks[name] = uxTaskGetStackHighWaterMark(handle);
+        }
+      }
+      #endif
+
+      if (CrashRecorder::heapRestartAvailable) {
+        auto docRestart = doc[FPSTR(S_RESTART)].to<JsonObject>();
+        docRestart[FPSTR(S_REASON)] = F("critical_heap");
+        docRestart[FPSTR(S_HEAP)] = CrashRecorder::heapRestart.heap;
+        docRestart[FPSTR(S_MAX_FREE_BLOCK)] = CrashRecorder::heapRestart.maxFreeBlock;
+        docRestart[FPSTR(S_UPTIME)] = CrashRecorder::heapRestart.uptime;
+      }
 
       auto docNetwork = doc[FPSTR(S_NETWORK)].to<JsonObject>();
       docNetwork[FPSTR(S_CONNECTION_TYPE)] = network->getConnectionType();

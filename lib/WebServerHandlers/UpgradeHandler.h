@@ -28,6 +28,7 @@ public:
   typedef std::function<bool(const String&)> CanUploadCallback;
   typedef std::function<bool(UpgradeType)> BeforeUpgradeCallback;
   typedef std::function<void(const UpgradeResult&, const UpgradeResult&)> AfterUpgradeCallback;
+  typedef std::function<void()> UploadAbortedCallback;
   
   UpgradeHandler(const char* uri) {
     this->uri = uri;
@@ -54,6 +55,11 @@ public:
   UpgradeHandler* setAfterUpgradeCallback(AfterUpgradeCallback callback = nullptr) {
     this->afterUpgradeCallback = callback;
 
+    return this;
+  }
+
+  UpgradeHandler* setUploadAbortedCallback(UploadAbortedCallback callback) {
+    this->uploadAbortedCallback = callback;
     return this;
   }
 
@@ -100,6 +106,23 @@ public:
       result = &this->filesystemResult;
       
     } else {
+      return;
+    }
+
+    // WebServer does not call handle() when the upload connection disappears.
+    // Always clean up, including when an earlier chunk already set an error.
+    if (upload.status == UPLOAD_FILE_ABORTED) {
+      if (Update.isRunning()) {
+        Update.end(false);
+      }
+      this->firmwareResult.status = UpgradeStatus::NONE;
+      this->firmwareResult.error.clear();
+      this->filesystemResult.status = UpgradeStatus::NONE;
+      this->filesystemResult.error.clear();
+      if (this->uploadAbortedCallback) {
+        this->uploadAbortedCallback();
+      }
+      Log.serrorln(FPSTR(L_PORTAL_OTA), F("File '%s': aborted"), upload.filename.c_str());
       return;
     }
 
@@ -193,14 +216,9 @@ public:
         result->error = Update.errorString();
         #endif
 
-        Log.serrorln(FPSTR(L_PORTAL_OTA), F("File '%s', on finish: %s"), upload.filename.c_str(), result->error);
+        Log.serrorln(FPSTR(L_PORTAL_OTA), F("File '%s', on finish: %s"), upload.filename.c_str(), result->error.c_str());
       }
 
-    } else if (upload.status == UPLOAD_FILE_ABORTED) {
-      Update.end(false);
-      result->status = UpgradeStatus::ABORTED;
-
-      Log.serrorln(FPSTR(L_PORTAL_OTA), F("File '%s': aborted"), upload.filename.c_str());
     }
   }
 
@@ -209,6 +227,7 @@ protected:
   CanUploadCallback canUploadCallback;
   BeforeUpgradeCallback beforeUpgradeCallback;
   AfterUpgradeCallback afterUpgradeCallback;
+  UploadAbortedCallback uploadAbortedCallback;
   const char* uri = nullptr;
 
   UpgradeResult firmwareResult{UpgradeType::FIRMWARE, UpgradeStatus::NONE};
